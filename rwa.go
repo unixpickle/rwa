@@ -33,6 +33,36 @@ type RWA struct {
 	Context *anynet.AddMixer
 }
 
+// NewRWA creates a randomized RWA with the given number
+// of inputs and hidden units.
+func NewRWA(c anyvec.Creator, inSize, stateSize int) *RWA {
+	oneVec := c.MakeVector(stateSize)
+	oneVec.AddScaler(c.MakeNumeric(1))
+	return &RWA{
+		SquashFunc: anynet.Tanh,
+		Init:       anydiff.NewVar(c.MakeVector(stateSize)),
+		Encoder:    anynet.NewFC(c, inSize, stateSize),
+		Masker: &anynet.AddMixer{
+			In1: anynet.NewFC(c, inSize, stateSize),
+			In2: anynet.NewFC(c, stateSize, stateSize),
+			Out: anynet.Net{
+				// Give the layer some biases (the scalers are just
+				// along for the ride).
+				&anynet.Affine{
+					Biases:  anydiff.NewVar(c.MakeVector(stateSize)),
+					Scalers: anydiff.NewVar(oneVec),
+				},
+				anynet.Tanh,
+			},
+		},
+		Context: &anynet.AddMixer{
+			In1: anynet.NewFC(c, inSize, 1),
+			In2: anynet.NewFC(c, stateSize, 1),
+			Out: anynet.Net{},
+		},
+	}
+}
+
 // DeserializeRWA deserializes an RWA.
 func DeserializeRWA(d []byte) (*RWA, error) {
 	var res RWA
@@ -242,15 +272,15 @@ func (b *blockRes) Propagate(u anyvec.Vector, s anyrnn.StateGrad, g anydiff.Grad
 	inDown := g[b.InPool]
 	stateDown := &State{
 		Hidden: &anyrnn.VecState{
-			PresentMap: s.Present(),
+			PresentMap: b.OutState.Present(),
 			Vector:     g[b.HiddenPool],
 		},
 		Num: &anyrnn.VecState{
-			PresentMap: s.Present(),
+			PresentMap: b.OutState.Present(),
 			Vector:     g[b.NumPool],
 		},
 		Denom: &anyrnn.VecState{
-			PresentMap: s.Present(),
+			PresentMap: b.OutState.Present(),
 			Vector:     g[b.DenomPool],
 		},
 	}
