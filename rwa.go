@@ -7,7 +7,13 @@ import (
 	"github.com/unixpickle/anynet"
 	"github.com/unixpickle/anynet/anyrnn"
 	"github.com/unixpickle/anyvec"
+	"github.com/unixpickle/anyvec/anyvecsave"
+	"github.com/unixpickle/serializer"
 )
+
+func init() {
+	serializer.RegisterTypedDeserializer((&RWA{}).SerializerType(), DeserializeRWA)
+}
 
 // RWA is a Recurrent Weighted Average RNN block.
 type RWA struct {
@@ -25,6 +31,19 @@ type RWA struct {
 
 	// Context is a(x,h) from the paper.
 	Context *anynet.AddMixer
+}
+
+// DeserializeRWA deserializes an RWA.
+func DeserializeRWA(d []byte) (*RWA, error) {
+	var res RWA
+	var initVec *anyvecsave.S
+	err := serializer.DeserializeAny(d, &res.SquashFunc, &initVec, &res.Encoder,
+		&res.Masker, &res.Context)
+	if err != nil {
+		return nil, err
+	}
+	res.Init = anydiff.NewVar(initVec.Vector)
+	return &res, nil
 }
 
 // Start generates an initial *State.
@@ -118,6 +137,23 @@ func (r *RWA) Parameters() []*anydiff.Var {
 		}
 	}
 	return res
+}
+
+// SerializerType returns the unique ID used to serialize
+// an RWA with the serializer package.
+func (r *RWA) SerializerType() string {
+	return "github.com/unixpickle/rwa.RWA"
+}
+
+// Serialize serializes an RWA.
+func (r *RWA) Serialize() ([]byte, error) {
+	return serializer.SerializeAny(
+		r.SquashFunc,
+		&anyvecsave.S{Vector: r.Init.Vector},
+		r.Encoder,
+		r.Masker,
+		r.Context,
+	)
 }
 
 // State stores the hidden state of an RWA block or the
