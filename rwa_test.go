@@ -14,8 +14,8 @@ import (
 func TestRWAGradients(t *testing.T) {
 	inSeq, inVars := randomTestSequence(3)
 	block := NewRWA(anyvec32.CurrentCreator(), 3, 2)
-	if len(block.Parameters()) != 13 {
-		t.Errorf("expected 13 parameters, but got %d", len(block.Parameters()))
+	if len(block.Parameters()) != 11 {
+		t.Errorf("expected 11 parameters, but got %d", len(block.Parameters()))
 	}
 	checker := &anydifftest.SeqChecker{
 		F: func() anyseq.Seq {

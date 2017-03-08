@@ -45,15 +45,7 @@ func NewRWA(c anyvec.Creator, inSize, stateSize int) *RWA {
 		Masker: &anynet.AddMixer{
 			In1: anynet.NewFC(c, inSize, stateSize),
 			In2: anynet.NewFC(c, stateSize, stateSize),
-			Out: anynet.Net{
-				// Give the layer some biases (the scalers are just
-				// along for the ride).
-				&anynet.Affine{
-					Biases:  anydiff.NewVar(c.MakeVector(stateSize)),
-					Scalers: anydiff.NewVar(oneVec),
-				},
-				anynet.Tanh,
-			},
+			Out: anynet.Tanh,
 		},
 		Context: &anynet.AddMixer{
 			In1: anynet.NewFC(c, inSize, 1),
