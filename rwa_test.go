@@ -1,6 +1,7 @@
 package rwa
 
 import (
+	"math"
 	"testing"
 
 	"github.com/unixpickle/anydiff"
@@ -10,6 +11,50 @@ import (
 	"github.com/unixpickle/anyvec"
 	"github.com/unixpickle/anyvec/anyvec32"
 )
+
+func TestRWAOutput(t *testing.T) {
+	block := NewRWA(anyvec32.CurrentCreator(), 3, 2)
+	paramVals := [][]float32{
+		{0.074941, -1.132446},
+		{0.63997, -0.21826, 0.88730, 0.25009, 0.11063, 0.72248},
+		{0.051791, 0.479197},
+		{0.0099470, 0.8399450, -0.2081483, 0.9820264, 0.3257544, 0.1064337},
+		{-0.515952, 0.055721},
+		{0.97504, 0.35937, -0.37616, 0.69398},
+		{0.60679, 0.44104},
+		{0.90352, 0.25258, 0.76472, 0.73948, 0.98564, 0.20552},
+		{-0.50516, 0.73835},
+		{0.26337, 0.28690, -0.29784, -0.79788},
+		{-0.017014, 0.803208},
+	}
+	for i, x := range block.Parameters() {
+		x.Vector.SetData(paramVals[i])
+	}
+
+	seq := anyseq.ConstSeqList(anyvec32.CurrentCreator(), [][]anyvec.Vector{
+		{
+			anyvec32.MakeVectorData([]float32{0.29989, 0.36990, 0.50296}),
+			anyvec32.MakeVectorData([]float32{0.37573, 0.29873, 0.22233}),
+			anyvec32.MakeVectorData([]float32{0.45905, 0.14858, 0.78369}),
+		},
+	})
+	out := anyrnn.Map(seq, block).Output()
+	expected := [][]float32{
+		{0.049205, 0.329647},
+		{0.12153, 0.39991},
+		{0.20841, 0.49782},
+	}
+	for i, aVec := range out {
+		a := aVec.Packed.Data().([]float32)
+		x := expected[i]
+		for j := range a {
+			if math.Abs(float64(x[j]-a[j])) > 1e-3 {
+				t.Errorf("step %d component %d: expected %v but got %v",
+					i, j, x[j], a[j])
+			}
+		}
+	}
+}
 
 func TestRWAGradients(t *testing.T) {
 	inSeq, inVars := randomTestSequence(3)
