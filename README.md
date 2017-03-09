@@ -8,6 +8,10 @@ As the sequence gets longer and longer, the running average could become more an
 
 If the above concern is actually an issue, perhaps the long-term benefits of RWAs could still be leveraged by stacking an RWA on top of an LSTM.
 
+# Results
+
+I created a [char-rnn branch](https://github.com/unixpickle/char-rnn/tree/rwa) that uses RWA. The RWA did not learn to do better than random at English text prediction, even when allowed to run for way more epochs than an LSTM (which learned extremely quickly). This seems to confirm my hypothesis about the model's shortcomings.
+
 # TODO
 
  * Perform operations in log domain to avoid floating-point overflow
