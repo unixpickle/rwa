@@ -45,7 +45,7 @@ func NewRWA(c anyvec.Creator, inSize, stateSize int) *RWA {
 		Masker: &anynet.AddMixer{
 			In1: anynet.NewFC(c, inSize, stateSize),
 			In2: anynet.NewFC(c, stateSize, stateSize),
-			Out: anynet.Tanh,
+			Out: anynet.Net{},
 		},
 		Context: &anynet.AddMixer{
 			In1: anynet.NewFC(c, inSize, stateSize),
