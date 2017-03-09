@@ -48,7 +48,9 @@ func TestRWAOutput(t *testing.T) {
 		a := aVec.Packed.Data().([]float32)
 		x := expected[i]
 		for j := range a {
-			if math.Abs(float64(x[j]-a[j])) > 1e-3 {
+			if math.IsNaN(float64(a[j])) {
+				t.Errorf("step %d component %d: got NaN", i, j)
+			} else if math.Abs(float64(x[j]-a[j])) > 1e-3 {
 				t.Errorf("step %d component %d: expected %v but got %v",
 					i, j, x[j], a[j])
 			}

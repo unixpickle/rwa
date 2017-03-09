@@ -3,6 +3,8 @@
 package rwa
 
 import (
+	"math"
+
 	"github.com/unixpickle/anydiff"
 	"github.com/unixpickle/anynet"
 	"github.com/unixpickle/anynet/anyrnn"
@@ -83,10 +85,14 @@ func (r *RWA) ScaleInWeights(scaler anyvec.Numeric) *RWA {
 // Start generates an initial *State.
 func (r *RWA) Start(n int) anyrnn.State {
 	c := r.Init.Vector.Creator()
+	zeroDenom := c.MakeVector(r.Init.Vector.Len())
+	zeroDenom.AddScaler(c.MakeNumeric(math.Inf(-1)))
 	return &State{
-		Hidden: anyrnn.NewVecState(r.Init.Vector, n),
-		Num:    anyrnn.NewVecState(c.MakeVector(r.Init.Vector.Len()), n),
-		Denom:  anyrnn.NewVecState(c.MakeVector(r.Init.Vector.Len()), n),
+		First:     true,
+		MaxWeight: anyrnn.NewVecState(zeroDenom, n),
+		Hidden:    anyrnn.NewVecState(r.Init.Vector, n),
+		Num:       anyrnn.NewVecState(c.MakeVector(r.Init.Vector.Len()), n),
+		Denom:     anyrnn.NewVecState(c.MakeVector(r.Init.Vector.Len()), n),
 	}
 }
 
@@ -102,6 +108,7 @@ func (r *RWA) Step(s anyrnn.State, in anyvec.Vector) anyrnn.Res {
 	c := in.Creator()
 
 	inPool := anydiff.NewVar(in)
+	maxPool := anydiff.NewVar(state.MaxWeight.Vector)
 	hiddenPool := anydiff.NewVar(state.Hidden.Vector)
 	numPool := anydiff.NewVar(state.Num.Vector)
 	denomPool := anydiff.NewVar(state.Denom.Vector)
@@ -111,27 +118,42 @@ func (r *RWA) Step(s anyrnn.State, in anyvec.Vector) anyrnn.Res {
 	intermed := anydiff.Fuse(hidden)
 	outs := anydiff.PoolMulti(intermed, func(reses []anydiff.Res) anydiff.MultiRes {
 		hidden := reses[0]
-		weight := anydiff.Exp(r.Context.Mix(inPool, hidden, batch))
+		weightLog := r.Context.Mix(inPool, hidden, batch)
 		inEnc := r.Encoder.Apply(inPool, batch)
 		inMask := anydiff.Tanh(r.Masker.Mix(inPool, hidden, batch))
 		z := anydiff.Mul(inEnc, inMask)
 
-		intermed := anydiff.Fuse(weight, z)
+		intermed := anydiff.Fuse(weightLog, z)
 		return anydiff.PoolMulti(intermed, func(reses []anydiff.Res) anydiff.MultiRes {
-			weight := reses[0]
+			weightLog := reses[0]
 			z := reses[1]
-			newNum := anydiff.Add(numPool, anydiff.Mul(z, weight))
-			newDenom := anydiff.Add(denomPool, weight)
-			intermed := anydiff.Fuse(newNum, newDenom)
+			var newMax, maxAdjust anydiff.Res
+			if state.First {
+				newMax = weightLog
+				zeros := c.MakeVector(maxPool.Vector.Len())
+				maxAdjust = anydiff.NewConst(zeros)
+			} else {
+				newMax = anydiff.ElemMax(weightLog, maxPool)
+				maxAdjust = anydiff.Exp(anydiff.Sub(maxPool, newMax))
+			}
+			weight := anydiff.Exp(anydiff.Sub(weightLog, newMax))
+			newNum := anydiff.Add(
+				anydiff.Mul(numPool, maxAdjust),
+				anydiff.Mul(z, weight),
+			)
+			newDenom := anydiff.Add(anydiff.Mul(denomPool, maxAdjust), weight)
+			intermed := anydiff.Fuse(newMax, newNum, newDenom)
 			return anydiff.PoolMulti(intermed, func(reses []anydiff.Res) anydiff.MultiRes {
-				newNum := reses[0]
-				newDenom := reses[1]
+				newMax := reses[0]
+				newNum := reses[1]
+				newDenom := reses[2]
 				invDenom := anydiff.Pow(newDenom, c.MakeNumeric(-1))
 				unsquashedHidden := anydiff.Mul(newNum, invDenom)
 				intermed := anydiff.Fuse(unsquashedHidden)
 				return anydiff.PoolMulti(intermed, func(reses []anydiff.Res) anydiff.MultiRes {
 					squashedHidden := r.SquashFunc.Apply(reses[0], batch)
-					return anydiff.Fuse(squashedHidden, unsquashedHidden, newNum, newDenom)
+					return anydiff.Fuse(squashedHidden, newMax, unsquashedHidden,
+						newNum, newDenom)
 				})
 			})
 		})
@@ -141,20 +163,25 @@ func (r *RWA) Step(s anyrnn.State, in anyvec.Vector) anyrnn.Res {
 		V:      anydiff.NewVarSet(r.Parameters()...),
 		OutVec: outs.Outputs()[0],
 		OutState: &State{
-			Hidden: &anyrnn.VecState{
+			MaxWeight: &anyrnn.VecState{
 				PresentMap: state.Present(),
 				Vector:     outs.Outputs()[1],
 			},
-			Num: &anyrnn.VecState{
+			Hidden: &anyrnn.VecState{
 				PresentMap: state.Present(),
 				Vector:     outs.Outputs()[2],
 			},
-			Denom: &anyrnn.VecState{
+			Num: &anyrnn.VecState{
 				PresentMap: state.Present(),
 				Vector:     outs.Outputs()[3],
 			},
+			Denom: &anyrnn.VecState{
+				PresentMap: state.Present(),
+				Vector:     outs.Outputs()[4],
+			},
 		},
 		InPool:     inPool,
+		MaxPool:    maxPool,
 		HiddenPool: hiddenPool,
 		NumPool:    numPool,
 		DenomPool:  denomPool,
@@ -193,8 +220,13 @@ func (r *RWA) Serialize() ([]byte, error) {
 // State stores the hidden state of an RWA block or the
 // gradient of such a state.
 //
-// The Num and Denom fields, corresponding to the rolling
-// numerators and denominators respectively, begin as 0.
+// The MaxWeight field stores the maximum (log domain)
+// weight from any past timestep.
+// It is used to ensure numerical stability.
+//
+// The Num and Denom fields store the current numerator,
+// divided by e^MaxWeight.
+// They both start at 0.
 //
 // The Hidden field stores the previous, unsquashed hidden
 // state.
@@ -203,9 +235,12 @@ func (r *RWA) Serialize() ([]byte, error) {
 // from the Num and Denom fields so that the network can
 // be evaluated at the first timestep.
 type State struct {
-	Hidden *anyrnn.VecState
-	Num    *anyrnn.VecState
-	Denom  *anyrnn.VecState
+	First bool
+
+	MaxWeight *anyrnn.VecState
+	Hidden    *anyrnn.VecState
+	Num       *anyrnn.VecState
+	Denom     *anyrnn.VecState
 }
 
 func (s *State) Present() anyrnn.PresentMap {
@@ -214,17 +249,21 @@ func (s *State) Present() anyrnn.PresentMap {
 
 func (s *State) Reduce(p anyrnn.PresentMap) anyrnn.State {
 	return &State{
-		Hidden: s.Hidden.Reduce(p).(*anyrnn.VecState),
-		Num:    s.Num.Reduce(p).(*anyrnn.VecState),
-		Denom:  s.Denom.Reduce(p).(*anyrnn.VecState),
+		First:     s.First,
+		MaxWeight: s.MaxWeight.Reduce(p).(*anyrnn.VecState),
+		Hidden:    s.Hidden.Reduce(p).(*anyrnn.VecState),
+		Num:       s.Num.Reduce(p).(*anyrnn.VecState),
+		Denom:     s.Denom.Reduce(p).(*anyrnn.VecState),
 	}
 }
 
 func (s *State) Expand(p anyrnn.PresentMap) anyrnn.StateGrad {
 	return &State{
-		Hidden: s.Hidden.Expand(p).(*anyrnn.VecState),
-		Num:    s.Num.Expand(p).(*anyrnn.VecState),
-		Denom:  s.Denom.Expand(p).(*anyrnn.VecState),
+		First:     s.First,
+		MaxWeight: s.MaxWeight.Expand(p).(*anyrnn.VecState),
+		Hidden:    s.Hidden.Expand(p).(*anyrnn.VecState),
+		Num:       s.Num.Expand(p).(*anyrnn.VecState),
+		Denom:     s.Denom.Expand(p).(*anyrnn.VecState),
 	}
 }
 
@@ -234,6 +273,7 @@ type blockRes struct {
 	V        anydiff.VarSet
 
 	InPool     *anydiff.Var
+	MaxPool    *anydiff.Var
 	HiddenPool *anydiff.Var
 	NumPool    *anydiff.Var
 	DenomPool  *anydiff.Var
@@ -256,17 +296,19 @@ func (b *blockRes) Vars() anydiff.VarSet {
 func (b *blockRes) Propagate(u anyvec.Vector, s anyrnn.StateGrad, g anydiff.Grad) (anyvec.Vector,
 	anyrnn.StateGrad) {
 	c := u.Creator()
-	down := make([]anyvec.Vector, 4)
+	down := make([]anyvec.Vector, 5)
 	down[0] = u
 	if s != nil {
 		st := s.(*State)
-		down[1] = st.Hidden.Vector
-		down[2] = st.Num.Vector
-		down[3] = st.Denom.Vector
+		down[1] = st.MaxWeight.Vector
+		down[2] = st.Hidden.Vector
+		down[3] = st.Num.Vector
+		down[4] = st.Denom.Vector
 	} else {
-		down[1] = c.MakeVector(b.OutState.Hidden.Vector.Len())
-		down[2] = c.MakeVector(b.OutState.Num.Vector.Len())
-		down[3] = c.MakeVector(b.OutState.Denom.Vector.Len())
+		down[1] = c.MakeVector(b.OutState.MaxWeight.Vector.Len())
+		down[2] = c.MakeVector(b.OutState.Hidden.Vector.Len())
+		down[3] = c.MakeVector(b.OutState.Num.Vector.Len())
+		down[4] = c.MakeVector(b.OutState.Denom.Vector.Len())
 	}
 	for _, x := range b.pools() {
 		g[x] = c.MakeVector(x.Vector.Len())
@@ -275,6 +317,10 @@ func (b *blockRes) Propagate(u anyvec.Vector, s anyrnn.StateGrad, g anydiff.Grad
 
 	inDown := g[b.InPool]
 	stateDown := &State{
+		MaxWeight: &anyrnn.VecState{
+			PresentMap: b.OutState.Present(),
+			Vector:     g[b.MaxPool],
+		},
 		Hidden: &anyrnn.VecState{
 			PresentMap: b.OutState.Present(),
 			Vector:     g[b.HiddenPool],
@@ -297,5 +343,5 @@ func (b *blockRes) Propagate(u anyvec.Vector, s anyrnn.StateGrad, g anydiff.Grad
 }
 
 func (b *blockRes) pools() []*anydiff.Var {
-	return []*anydiff.Var{b.InPool, b.HiddenPool, b.NumPool, b.DenomPool}
+	return []*anydiff.Var{b.InPool, b.MaxPool, b.HiddenPool, b.NumPool, b.DenomPool}
 }
