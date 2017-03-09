@@ -68,6 +68,18 @@ func DeserializeRWA(d []byte) (*RWA, error) {
 	return &res, nil
 }
 
+// ScaleInWeights scales all of the weights that modify
+// input vectors.
+// It returns r for convenience.
+func (r *RWA) ScaleInWeights(scaler anyvec.Numeric) *RWA {
+	mats := []*anydiff.Var{r.Encoder.Weights, r.Masker.In1.(*anynet.FC).Weights,
+		r.Context.In1.(*anynet.FC).Weights}
+	for _, gate := range mats {
+		gate.Vector.Scale(scaler)
+	}
+	return r
+}
+
 // Start generates an initial *State.
 func (r *RWA) Start(n int) anyrnn.State {
 	c := r.Init.Vector.Creator()
