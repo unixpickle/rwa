@@ -48,8 +48,8 @@ func NewRWA(c anyvec.Creator, inSize, stateSize int) *RWA {
 			Out: anynet.Tanh,
 		},
 		Context: &anynet.AddMixer{
-			In1: anynet.NewFC(c, inSize, 1),
-			In2: anynet.NewFC(c, stateSize, 1),
+			In1: anynet.NewFC(c, inSize, stateSize),
+			In2: anynet.NewFC(c, stateSize, stateSize),
 			Out: anynet.Net{},
 		},
 	}
@@ -74,7 +74,7 @@ func (r *RWA) Start(n int) anyrnn.State {
 	return &State{
 		Hidden: anyrnn.NewVecState(r.Init.Vector, n),
 		Num:    anyrnn.NewVecState(c.MakeVector(r.Init.Vector.Len()), n),
-		Denom:  anyrnn.NewVecState(c.MakeVector(1), n),
+		Denom:  anyrnn.NewVecState(c.MakeVector(r.Init.Vector.Len()), n),
 	}
 }
 
@@ -108,14 +108,14 @@ func (r *RWA) Step(s anyrnn.State, in anyvec.Vector) anyrnn.Res {
 		return anydiff.PoolMulti(intermed, func(reses []anydiff.Res) anydiff.MultiRes {
 			weight := reses[0]
 			z := reses[1]
-			newNum := anydiff.Add(numPool, anydiff.ScaleRepeated(z, weight))
+			newNum := anydiff.Add(numPool, anydiff.Mul(z, weight))
 			newDenom := anydiff.Add(denomPool, weight)
 			intermed := anydiff.Fuse(newNum, newDenom)
 			return anydiff.PoolMulti(intermed, func(reses []anydiff.Res) anydiff.MultiRes {
 				newNum := reses[0]
 				newDenom := reses[1]
 				invDenom := anydiff.Pow(newDenom, c.MakeNumeric(-1))
-				unsquashedHidden := anydiff.ScaleRepeated(newNum, invDenom)
+				unsquashedHidden := anydiff.Mul(newNum, invDenom)
 				intermed := anydiff.Fuse(unsquashedHidden)
 				return anydiff.PoolMulti(intermed, func(reses []anydiff.Res) anydiff.MultiRes {
 					squashedHidden := r.SquashFunc.Apply(reses[0], batch)
