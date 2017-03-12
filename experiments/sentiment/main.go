@@ -33,13 +33,15 @@ func main() {
 	var stepSize float64
 	var hidden int
 	var lstm bool
+	var hybrid bool
 	flag.StringVar(&modelPath, "out", "out_net", "output model file")
 	flag.StringVar(&trainingPath, "training", "", "training data file")
 	flag.StringVar(&testingPath, "testing", "", "testing data file")
 	flag.IntVar(&batchSize, "batch", 16, "SGD batch size")
 	flag.Float64Var(&stepSize, "step", 0.001, "SGD step size")
-	flag.IntVar(&hidden, "hidden", 256, "number of hidden units")
+	flag.IntVar(&hidden, "hidden", 384, "number of hidden units")
 	flag.BoolVar(&lstm, "lstm", false, "use LSTM instead of RWA")
+	flag.BoolVar(&hybrid, "hybrid", false, "use hybrid LSTM-RWA model")
 	flag.Parse()
 
 	if trainingPath == "" || testingPath == "" {
@@ -52,7 +54,7 @@ func main() {
 	if err := serializer.LoadAny(modelPath, &model); err != nil {
 		log.Println("Creating new model...")
 		blockMaker := func(in, out int, inScale float32) anyrnn.Block {
-			if lstm {
+			if lstm || (hybrid && inScale > 1) {
 				return anyrnn.NewLSTM(c, in, out).ScaleInWeights(inScale)
 			} else {
 				return rwa.NewRWA(c, in, out).ScaleInWeights(inScale)
