@@ -6,6 +6,7 @@ import (
 	"log"
 	"math/rand"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/unixpickle/anydiff"
@@ -187,6 +188,9 @@ func (m *Model) Serialize() ([]byte, error) {
 type SampleList struct {
 	Tweets     []string
 	Sentiments []bool
+
+	cacheLock *sync.RWMutex
+	charCache map[byte]anyvec.Vector
 }
 
 func ReadSampleList(csvFile string) (*SampleList, error) {
@@ -208,6 +212,8 @@ func ReadSampleList(csvFile string) (*SampleList, error) {
 		res.Sentiments = append(res.Sentiments, row[0] == "4")
 		res.Tweets = append(res.Tweets, row[len(row)-1])
 	}
+	res.cacheLock = &sync.RWMutex{}
+	res.charCache = map[byte]anyvec.Vector{}
 	return &res, nil
 }
 
@@ -224,6 +230,8 @@ func (s *SampleList) Slice(i, j int) anysgd.SampleList {
 	return &SampleList{
 		Tweets:     append([]string{}, s.Tweets[i:j]...),
 		Sentiments: append([]bool{}, s.Sentiments[i:j]...),
+		cacheLock:  s.cacheLock,
+		charCache:  s.charCache,
 	}
 }
 
@@ -235,9 +243,7 @@ func (s *SampleList) GetSample(i int) (*anys2s.Sample, error) {
 	data := []byte(s.Tweets[i])
 	var input []anyvec.Vector
 	for _, x := range data {
-		vec := make([]float32, 0x100)
-		vec[int(x)] = 1
-		input = append(input, anyvec32.MakeVectorData(vec))
+		input = append(input, s.charVec(x))
 	}
 	classVal := float32(0)
 	if s.Sentiments[i] {
@@ -248,4 +254,19 @@ func (s *SampleList) GetSample(i int) (*anys2s.Sample, error) {
 		Input:  input,
 		Output: output,
 	}, nil
+}
+
+func (s *SampleList) charVec(char byte) anyvec.Vector {
+	s.cacheLock.RLock()
+	res, ok := s.charCache[char]
+	s.cacheLock.RUnlock()
+	if !ok {
+		data := make([]float32, 0x100)
+		data[int(char)] = 1
+		res = anyvec32.MakeVectorData(data)
+		s.cacheLock.Lock()
+		s.charCache[char] = res
+		s.cacheLock.Unlock()
+	}
+	return res
 }
