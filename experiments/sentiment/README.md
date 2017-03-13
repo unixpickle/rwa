@@ -20,12 +20,14 @@ The hybrid model was inspired by the idea that the LSTM could deal with short-te
 
 # Results
 
-I trained the models for 1.5 epochs on this task. I found that the hybrid model learns significantly faster than the LSTM, especially at the beginning of training. Here is a graph comparing the two, with number of samples along the x-axis and validation cross-entropy on the y-axis:
+I trained the models for 1.5 epochs on this task. I found that the hybrid model learns significantly faster than the LSTM, especially at the beginning of training. Here is a graph comparing all three models, with number of samples along the x-axis and validation cross-entropy on the y-axis:
 
 ![Validation graph](graphs/validation_graph.png)
 
 The pure LSTM achieved an average validation cross-entropy of 0.39 during training. At the end of training, the validation accuracy was 86.1%. Note that the original Sentiment140 paper only managed to achieve 83.0% accuracy, and that required a ton of feature engineering.
 
 The hybrid LSTM-RWA achieved an average validation cross-entropy 0.37 during training, but only 83.8% validation accuracy. This can likely be explained by sample noise near the end of training. If the learning rate were annealed during training, we would likely find that the LSTM and hybrid models had similar validation accuracies at the end. It is clear from the average cross-entropy (which, as a moving average, is more reliable than accuracy) that the hybrid LSTM was doing slightly better than the pure LSTM.
+
+The pure RWA achieved an accuracy of 79.4% at the end of training, not to mention its much worse cross-entropy.
 
 I am currently running an experiment with the vanilla RWA. However, in preliminary experiments I found that it learned much slower than the LSTM.
