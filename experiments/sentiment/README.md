@@ -30,6 +30,6 @@ The hybrid LSTM-RWA achieved an average validation cross-entropy 0.37 during tra
 
 The pure RWA achieved an accuracy of 79.4% at the end of training, not to mention its much worse cross-entropy.
 
-As an extra experiment, I trained the hybrid model for a few more epochs with a smaller learning rate. It overfit significantly:
+As an extra experiment, I trained the hybrid model for a few more epochs with a smaller learning rate. It overfit:
 
 ![Overfit validation](graphs/hybrid_overfit.png)
