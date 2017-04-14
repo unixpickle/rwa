@@ -39,7 +39,7 @@ type RWA struct {
 // of inputs and hidden units.
 func NewRWA(c anyvec.Creator, inSize, stateSize int) *RWA {
 	oneVec := c.MakeVector(stateSize)
-	oneVec.AddScaler(c.MakeNumeric(1))
+	oneVec.AddScalar(c.MakeNumeric(1))
 	return &RWA{
 		SquashFunc: anynet.Tanh,
 		Init:       anydiff.NewVar(c.MakeVector(stateSize)),
@@ -86,7 +86,7 @@ func (r *RWA) ScaleInWeights(scaler anyvec.Numeric) *RWA {
 func (r *RWA) Start(n int) anyrnn.State {
 	c := r.Init.Vector.Creator()
 	zeroDenom := c.MakeVector(r.Init.Vector.Len())
-	zeroDenom.AddScaler(c.MakeNumeric(math.Inf(-1)))
+	zeroDenom.AddScalar(c.MakeNumeric(math.Inf(-1)))
 	return &State{
 		First:     true,
 		MaxWeight: anyrnn.NewVecState(zeroDenom, n),
